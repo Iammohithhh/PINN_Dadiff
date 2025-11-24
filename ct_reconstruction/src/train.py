@@ -99,8 +99,11 @@ class Trainer:
         self.config = config
         self.device = device
 
+        # Gradient clipping
+        self.grad_clip = config.get('grad_clip', 1.0)
+
         # Optimizer
-        lr = config.get('learning_rate', 6e-3)
+        lr = config.get('learning_rate', 1e-4)
         use_sam = config.get('use_sam', True)
 
         if use_sam:
@@ -176,6 +179,9 @@ class Trainer:
                 loss = losses['total']
                 loss.backward()
 
+                # Gradient clipping
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+
                 self.optimizer.first_step(zero_grad=True)
 
                 # Second forward-backward
@@ -186,6 +192,9 @@ class Trainer:
                 )
                 loss = losses['total']
                 loss.backward()
+
+                # Gradient clipping
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
 
                 self.optimizer.second_step(zero_grad=True)
             else:
@@ -202,10 +211,13 @@ class Trainer:
 
                 if self.use_amp:
                     self.scaler.scale(loss).backward()
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
                 else:
                     loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
                     self.optimizer.step()
 
             # Compute metrics
@@ -428,11 +440,12 @@ DEFAULT_CONFIG = {
     # Training
     'batch_size': 4,
     'num_epochs': 600,
-    'learning_rate': 6e-3,
+    'learning_rate': 1e-4,  # FIXED: Reduced from 6e-3 (was too high, caused NaN)
     'use_sam': True,
     'sam_rho': 0.05,
     'use_amp': True,
     'num_workers': 4,
+    'grad_clip': 1.0,  # Gradient clipping to prevent explosion
 
     # Loss weights - FIXED: CT-optimized weights (physics is primary)
     'alpha': 0.4,  # pixel loss (reduced for CT)
