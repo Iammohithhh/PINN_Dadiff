@@ -577,11 +577,24 @@ class CT_ADRN(nn.Module):
         # Add physics projection step
         # FIXED: Adaptive blending - physics strength increases with lower t (later steps)
         if sinogram is not None:
-            # Convert features to image domain
+            # Convert features to image domain (keeps spatial size)
             mean_image = self.to_image(mean)
+            feature_size = mean_image.shape[2:]  # Store original feature spatial size
 
-            # Physics step
-            mean_image_corrected = self.physics_proj(mean_image, sinogram, weights, mask)
+            # FIXED: Upsample to full image size for physics projection
+            mean_image_full = F.interpolate(
+                mean_image, size=(self.img_size, self.img_size),
+                mode='bilinear', align_corners=False
+            )
+
+            # Physics step at full resolution
+            mean_image_corrected = self.physics_proj(mean_image_full, sinogram, weights, mask)
+
+            # Downsample back to feature size
+            mean_image_corrected = F.interpolate(
+                mean_image_corrected, size=feature_size,
+                mode='bilinear', align_corners=False
+            )
 
             # Convert back to feature domain
             mean_corrected = self.from_image(mean_image_corrected)
