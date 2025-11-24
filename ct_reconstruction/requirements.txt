@@ -1,0 +1,31 @@
+# CT-PINN-DADif Requirements
+# Physics-Informed Deep Adaptive Diffusion Network for CT Reconstruction
+
+# Core
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.21.0
+scipy>=1.7.0
+
+# Training utilities
+tqdm>=4.65.0
+
+# Visualization
+matplotlib>=3.5.0
+
+# Optional: ASTRA toolbox for fast GPU projections
+# pip install astra-toolbox  # or conda install -c astra-toolbox astra-toolbox
+
+# Optional: ODL (Operator Discretization Library) for advanced CT operations
+# pip install odl
+
+# Optional: torch_radon for differentiable Radon transform
+# pip install torch_radon
+
+# Optional: for perceptual loss
+# torchvision (already included above)
+
+# Development
+# pytest>=7.0.0
+# black>=23.0.0
+# flake8>=6.0.0
