@@ -423,9 +423,9 @@ DEFAULT_CONFIG = {
     'latent_dim': 128,
     'context_dim': 256,
     'num_diffusion_steps': 12,
-    'lambda_phys_lpce': 0.3,
-    'lambda_phys_pace': 0.1,
-    'use_final_dc': True,
+    'lambda_phys_lpce': 0.05,  # FIXED: Reduced from 0.3 (too high, caused NaN)
+    'lambda_phys_pace': 0.01,  # FIXED: Reduced from 0.1 (too high)
+    'use_final_dc': False,      # FIXED: Disabled - final_dc module outputs zeros
 
     # Data
     'dataset_type': 'simulated',
@@ -441,16 +441,16 @@ DEFAULT_CONFIG = {
     'batch_size': 4,
     'num_epochs': 600,
     'learning_rate': 1e-4,  # FIXED: Reduced from 6e-3 (was too high, caused NaN)
-    'use_sam': True,
+    'use_sam': False,       # FIXED: Disabled for stability (conflicts with AMP)
     'sam_rho': 0.05,
     'use_amp': True,
     'num_workers': 4,
     'grad_clip': 1.0,  # Gradient clipping to prevent explosion
 
-    # Loss weights - FIXED: CT-optimized weights (physics is primary)
-    'alpha': 0.4,  # pixel loss (reduced for CT)
-    'beta': 0.1,   # perceptual loss (reduced - VGG not ideal for CT)
-    'gamma': 0.5,  # physics loss (increased - physics is primary for CT)
+    # Loss weights - FIXED: Reduced physics weights to prevent NaN
+    'alpha': 0.4,   # pixel loss
+    'beta': 0.1,    # perceptual loss (reduced - VGG not ideal for CT)
+    'gamma': 0.05,  # FIXED: physics loss - reduced from 0.5 (was too high with WLS weights)
     'tv_weight': 1e-4,
     'nonneg_weight': 1e-3,
     'use_poisson': False,

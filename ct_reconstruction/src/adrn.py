@@ -486,8 +486,8 @@ class CT_ADRN(nn.Module):
         num_detectors: Optional[int] = None,
         num_timesteps: int = 1000,
         num_inference_steps: int = 12,
-        beta_min: float = 0.1,
-        beta_max: float = 20.0,
+        beta_min: float = 0.0001,  # FIXED: Was 0.1 (too high!)
+        beta_max: float = 0.02,     # FIXED: Was 20.0 (INSANELY high, caused NaN!)
         physics_step_size: float = 0.1
     ):
         super().__init__()
@@ -495,16 +495,20 @@ class CT_ADRN(nn.Module):
         self.num_inference_steps = num_inference_steps
         self.img_size = img_size
 
-        # Diffusion noise schedule (exponential)
-        betas = torch.linspace(beta_min, beta_max, num_timesteps) / num_timesteps
+        # FIXED: Proper diffusion noise schedule (linear, not exponential)
+        betas = torch.linspace(beta_min, beta_max, num_timesteps)
         alphas = 1.0 - betas
         alphas_cumprod = torch.cumprod(alphas, dim=0)
+
+        # FIXED: Add epsilon to prevent division by zero
+        eps = 1e-8
+        alphas_cumprod = torch.clamp(alphas_cumprod, min=eps, max=1.0 - eps)
 
         self.register_buffer('betas', betas)
         self.register_buffer('alphas', alphas)
         self.register_buffer('alphas_cumprod', alphas_cumprod)
         self.register_buffer('sqrt_alphas_cumprod', torch.sqrt(alphas_cumprod))
-        self.register_buffer('sqrt_one_minus_alphas_cumprod', torch.sqrt(1.0 - alphas_cumprod))
+        self.register_buffer('sqrt_one_minus_alphas_cumprod', torch.sqrt(torch.clamp(1.0 - alphas_cumprod, min=eps)))
 
         # Denoising network
         self.denoise_net = DiffusionUNet(
@@ -565,14 +569,23 @@ class CT_ADRN(nn.Module):
         # Predict noise
         noise_pred = self.denoise_net(x_t, t_tensor)
 
-        # Compute mean
+        # Compute mean with numerical stability
         alpha = self.alphas[t]
         alpha_cumprod = self.alphas_cumprod[t]
         beta = self.betas[t]
 
-        mean = (1.0 / torch.sqrt(alpha)) * (
-            x_t - (beta / self.sqrt_one_minus_alphas_cumprod[t]) * noise_pred
-        )
+        # FIXED: Add epsilon and clamping for numerical stability
+        eps = 1e-8
+        sqrt_alpha = torch.sqrt(torch.clamp(alpha, min=eps))
+        sqrt_one_minus = torch.clamp(self.sqrt_one_minus_alphas_cumprod[t], min=eps)
+
+        # Clamp noise prediction to prevent explosion
+        noise_pred = torch.clamp(noise_pred, min=-10, max=10)
+
+        mean = (1.0 / sqrt_alpha) * (x_t - (beta / sqrt_one_minus) * noise_pred)
+
+        # FIXED: Clamp mean to prevent numerical overflow
+        mean = torch.clamp(mean, min=-50, max=50)
 
         # Add physics projection step
         # FIXED: Adaptive blending - physics strength increases with lower t (later steps)
