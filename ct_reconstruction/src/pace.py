@@ -263,6 +263,8 @@ class PhysicsRegularizationPACE(nn.Module):
 
     Ensures contextual features adhere to CT physics constraints.
     R_phys(A_l) = ||Ax - y||_W^2 + TV(x)
+
+    FIXED: Use configurable in_channels and proper sinogram geometry.
     """
 
     def __init__(
@@ -270,19 +272,21 @@ class PhysicsRegularizationPACE(nn.Module):
         img_size: int = 256,
         num_angles: int = 180,
         num_detectors: Optional[int] = None,
+        in_channels: int = 256,
         sino_weight: float = 1.0,
         tv_weight: float = 0.01
     ):
         super().__init__()
         self.sino_weight = sino_weight
         self.tv_weight = tv_weight
+        self.img_size = img_size
 
         self.radon = RadonTransform(img_size, num_angles, num_detectors)
         self.wls_loss = WeightedLeastSquaresLoss()
         self.tv_loss = TotalVariationLoss()
 
         # Learnable projection to single channel
-        self.proj = nn.Conv2d(256, 1, 1)
+        self.proj = nn.Conv2d(in_channels, 1, 1, bias=False)
 
     def forward(
         self,
@@ -295,12 +299,13 @@ class PhysicsRegularizationPACE(nn.Module):
         features_1ch = self.proj(features)
 
         # Forward projection
-        sinogram_pred = self.radon.forward_fast(features_1ch)
+        sinogram_pred = self.radon.forward(features_1ch)
 
-        # Resize sinogram if needed
+        # Resize sinogram if needed (geometry-aware, same num_angles/num_detectors)
         if sinogram_pred.shape != sinogram_target.shape:
             sinogram_pred = F.interpolate(
-                sinogram_pred, size=sinogram_target.shape[2:], mode='bilinear'
+                sinogram_pred, size=sinogram_target.shape[2:],
+                mode='bilinear', align_corners=True
             )
 
         # Sinogram consistency loss
@@ -334,6 +339,7 @@ class CT_PACE(nn.Module):
     ):
         super().__init__()
         self.lambda_phys = lambda_phys
+        self.img_size = img_size  # Store for upsampling in forward
 
         # ASPP for multi-scale features
         self.aspp = ASPP(in_channels, out_channels, atrous_rates)
@@ -354,11 +360,12 @@ class CT_PACE(nn.Module):
             nn.ReLU(inplace=True)
         )
 
-        # Physics regularization
+        # Physics regularization - pass out_channels for channel projection
         self.physics_reg = PhysicsRegularizationPACE(
             img_size=img_size,
             num_angles=num_angles,
-            num_detectors=num_detectors
+            num_detectors=num_detectors,
+            in_channels=out_channels
         )
 
         # Residual connection projection
@@ -397,8 +404,10 @@ class CT_PACE(nn.Module):
         z_pace = self.refine(z_attn) + residual
 
         if return_reg_loss and sinogram is not None:
-            # Upsample for physics regularization
-            z_upsampled = F.interpolate(z_pace, size=(sinogram.shape[2], sinogram.shape[3]), mode='bilinear')
+            # FIXED: Upsample to IMAGE dimensions, not sinogram dimensions
+            # Physics regularization expects image-space features to project to sinogram
+            z_upsampled = F.interpolate(z_pace, size=(self.img_size, self.img_size),
+                                        mode='bilinear', align_corners=True)
             reg_loss = self.physics_reg(z_upsampled, sinogram, weights)
             return z_pace, reg_loss
 

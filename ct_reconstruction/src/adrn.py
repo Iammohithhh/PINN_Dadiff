@@ -563,15 +563,21 @@ class CT_ADRN(nn.Module):
         )
 
         # Add physics projection step
+        # FIXED: Adaptive blending - physics strength increases with lower t (later steps)
         if sinogram is not None:
             # Convert features to image domain
             mean_image = self.to_image(mean)
 
             # Physics step
-            mean_image = self.physics_proj(mean_image, sinogram, weights, mask)
+            mean_image_corrected = self.physics_proj(mean_image, sinogram, weights, mask)
 
             # Convert back to feature domain
-            mean = self.from_image(mean_image) + mean * 0.5  # Blend
+            mean_corrected = self.from_image(mean_image_corrected)
+
+            # Adaptive blending: stronger physics at later steps (lower t)
+            # At t=num_timesteps: blend=0.2, at t=0: blend=1.0 (full physics)
+            physics_weight = 0.2 + 0.8 * (1.0 - t / self.num_timesteps)
+            mean = physics_weight * mean_corrected + (1.0 - physics_weight) * mean
 
         # Add noise for non-final steps
         if t > 0:

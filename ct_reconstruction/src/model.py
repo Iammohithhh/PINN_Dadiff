@@ -17,7 +17,8 @@ from .ct_physics import (
     PoissonNLLLoss,
     WeightedLeastSquaresLoss,
     TotalVariationLoss,
-    NonNegativityLoss
+    NonNegativityLoss,
+    compute_num_detectors  # FIXED: Use centralized computation
 )
 from .lpce import CT_LPCE
 from .pace import CT_PACE
@@ -42,14 +43,14 @@ class CTReconstructionLoss(nn.Module):
         img_size: int = 256,
         num_angles: int = 180,
         num_detectors: Optional[int] = None,
-        alpha: float = 0.5,   # Pixel loss weight
-        beta: float = 0.2,    # Perceptual loss weight
-        gamma: float = 0.3,   # Physics loss weight
+        alpha: float = 0.4,   # Pixel loss weight (FIXED: reduced for CT)
+        beta: float = 0.1,    # Perceptual loss weight (FIXED: reduced - VGG not ideal for CT)
+        gamma: float = 0.5,   # Physics loss weight (FIXED: increased for CT - physics is primary)
         use_poisson: bool = False,  # Use Poisson NLL vs WLS
         I0: float = 1e4,
         tv_weight: float = 1e-4,
         nonneg_weight: float = 1e-3,
-        use_perceptual: bool = False
+        use_perceptual: bool = False  # FIXED: Disabled by default for CT
     ):
         super().__init__()
         self.alpha = alpha
@@ -190,7 +191,8 @@ class CT_PINN_DADif(nn.Module):
         super().__init__()
         self.img_size = img_size
         self.num_angles = num_angles
-        self.num_detectors = num_detectors or int(torch.ceil(torch.tensor(2 ** 0.5 * img_size)).item())
+        # FIXED: Use centralized num_detectors computation for consistency
+        self.num_detectors = num_detectors or compute_num_detectors(img_size)
 
         # FBP for initial reconstruction
         self.fbp = FilteredBackProjection(img_size, num_angles, self.num_detectors)

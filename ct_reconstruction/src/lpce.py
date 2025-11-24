@@ -201,6 +201,12 @@ class PhysicsBranch(nn.Module):
             nn.ReLU(inplace=True),
         )
 
+        # Learnable projection to single channel for backprojection
+        self.sino_to_single = nn.Conv2d(base_channels, 1, 1, bias=False)
+
+        # Learnable channel expansion (instead of expand)
+        self.channel_expand = nn.Conv2d(1, base_channels, 1, bias=False)
+
         # Project sinogram features back to image domain
         self.sino_to_image = nn.Sequential(
             nn.Conv2d(base_channels, base_channels, 3, 1, 1),
@@ -247,12 +253,13 @@ class PhysicsBranch(nn.Module):
         sino_features = self.sino_encoder(residual_sino)
 
         # Backproject features to image domain
-        # Average pooling to reduce channels before backprojection
-        sino_pooled = sino_features.mean(dim=1, keepdim=True)
+        # Use learnable 1x1 conv to reduce channels before backprojection
+        sino_pooled = self.sino_to_single(sino_features)
         backprojected = self.fbp.backproject(sino_pooled)
 
-        # Expand channels
-        backprojected = backprojected.expand(-1, sino_features.shape[1], -1, -1)
+        # FIXED: Use learnable upsampling instead of expand
+        # This creates diverse channel representations from single backprojected channel
+        backprojected = self.channel_expand(backprojected)
 
         # Refine in image domain
         image_features = self.sino_to_image(backprojected)
@@ -270,6 +277,8 @@ class PhysicsRegularization(nn.Module):
 
     Enforces sinogram consistency and smoothness constraints.
     R_phys(A_l) = ||A(A_l) - y||_W^2 + eta * TV(A_l)
+
+    FIXED: Use learnable 1x1 conv for channel projection instead of mean.
     """
 
     def __init__(
@@ -277,6 +286,7 @@ class PhysicsRegularization(nn.Module):
         img_size: int = 256,
         num_angles: int = 180,
         num_detectors: Optional[int] = None,
+        in_channels: int = 128,
         sino_weight: float = 1.0,
         tv_weight: float = 0.01
     ):
@@ -288,6 +298,10 @@ class PhysicsRegularization(nn.Module):
         self.wls_loss = WeightedLeastSquaresLoss()
         self.tv_loss = TotalVariationLoss()
 
+        # Learnable projection from multi-channel features to single-channel image
+        # This allows the network to learn which channels are important
+        self.channel_proj = nn.Conv2d(in_channels, 1, 1, bias=False)
+
     def forward(
         self,
         features: torch.Tensor,
@@ -298,21 +312,27 @@ class PhysicsRegularization(nn.Module):
         Compute physics regularization loss.
 
         Args:
-            features: Intermediate feature activation (treated as image)
+            features: Intermediate feature activation (B, C, H, W)
             sinogram_target: Target sinogram
             weights: Optional WLS weights
 
         Returns:
             Regularization loss
         """
-        # Project features to sinogram domain
-        # Reduce channels first
+        # Project features to single channel using learnable projection
         if features.shape[1] > 1:
-            features_1ch = features.mean(dim=1, keepdim=True)
+            features_1ch = self.channel_proj(features)
         else:
             features_1ch = features
 
-        sinogram_features = self.radon.forward_fast(features_1ch)
+        sinogram_features = self.radon.forward(features_1ch)
+
+        # Handle size mismatch
+        if sinogram_features.shape != sinogram_target.shape:
+            sinogram_features = F.interpolate(
+                sinogram_features, size=sinogram_target.shape[2:],
+                mode='bilinear', align_corners=True
+            )
 
         # Sinogram consistency
         sino_loss = self.wls_loss(sinogram_features, sinogram_target, weights)
@@ -377,11 +397,12 @@ class CT_LPCE(nn.Module):
             ResidualBlock(latent_dim)
         )
 
-        # Physics regularization
+        # Physics regularization - pass latent_dim for channel projection
         self.physics_reg = PhysicsRegularization(
             img_size=img_size,
             num_angles=num_angles,
-            num_detectors=num_detectors
+            num_detectors=num_detectors,
+            in_channels=latent_dim
         )
 
     def forward(

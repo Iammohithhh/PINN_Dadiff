@@ -26,14 +26,16 @@ from .ct_physics import RadonTransform
 
 def compute_metrics(pred: torch.Tensor, target: torch.Tensor) -> Dict[str, float]:
     """
-    Compute PSNR and SSIM metrics.
+    Compute PSNR, SSIM, RMSE, and MAE metrics.
+
+    FIXED: Added RMSE and MAE - standard CT reconstruction metrics.
 
     Args:
         pred: Predicted image (B, 1, H, W)
         target: Ground truth image (B, 1, H, W)
 
     Returns:
-        Dictionary with PSNR and SSIM values
+        Dictionary with PSNR, SSIM, RMSE, and MAE values
     """
     # Ensure same range
     pred = pred.clamp(0, 1)
@@ -41,6 +43,12 @@ def compute_metrics(pred: torch.Tensor, target: torch.Tensor) -> Dict[str, float
 
     # MSE
     mse = ((pred - target) ** 2).mean().item()
+
+    # RMSE (Root Mean Square Error) - ADDED
+    rmse = np.sqrt(mse)
+
+    # MAE (Mean Absolute Error) - ADDED
+    mae = (torch.abs(pred - target)).mean().item()
 
     # PSNR
     if mse < 1e-10:
@@ -64,7 +72,9 @@ def compute_metrics(pred: torch.Tensor, target: torch.Tensor) -> Dict[str, float
 
     return {
         'psnr': psnr,
-        'ssim': ssim.mean().item() * 100  # Convert to percentage
+        'ssim': ssim.mean().item() * 100,  # Convert to percentage
+        'rmse': rmse,
+        'mae': mae
     }
 
 
@@ -437,14 +447,14 @@ DEFAULT_CONFIG = {
     'use_amp': True,
     'num_workers': 4,
 
-    # Loss weights
-    'alpha': 0.5,  # pixel loss
-    'beta': 0.2,   # perceptual loss
-    'gamma': 0.3,  # physics loss
+    # Loss weights - FIXED: CT-optimized weights (physics is primary)
+    'alpha': 0.4,  # pixel loss (reduced for CT)
+    'beta': 0.1,   # perceptual loss (reduced - VGG not ideal for CT)
+    'gamma': 0.5,  # physics loss (increased - physics is primary for CT)
     'tv_weight': 1e-4,
     'nonneg_weight': 1e-3,
     'use_poisson': False,
-    'use_perceptual': False,
+    'use_perceptual': False,  # Disabled by default - VGG trained on natural images
 
     # Checkpointing
     'checkpoint_dir': 'experiments/checkpoints',

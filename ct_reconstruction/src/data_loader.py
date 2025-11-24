@@ -149,13 +149,23 @@ class SimulatedCTDataset(Dataset):
             np.random.seed(seed)
             random.seed(seed)
 
-        # Noise levels (standard deviation)
-        self.noise_std = {
-            'none': 0.0,
-            'low': 0.01,
-            'medium': 0.03,
-            'high': 0.05
+        # FIXED: I0 values for different noise levels (lower I0 = more Poisson noise)
+        # This is the physically correct way to simulate low-dose CT
+        self.I0_levels = {
+            'none': 1e6,    # Very high dose (essentially noiseless)
+            'low': 1e4,     # Standard dose
+            'medium': 5e3,  # Low dose
+            'high': 1e3     # Ultra-low dose
         }
+        self.I0 = self.I0_levels.get(noise_level, I0)
+
+        # FIXED: Create Radon and FBP once in __init__ for efficiency
+        self._radon = RadonTransform(
+            self.img_size, self.num_angles, self.num_detectors, device='cpu'
+        )
+        self._fbp = FilteredBackProjection(
+            self.img_size, self.num_angles, self.num_detectors, device='cpu'
+        )
 
         # Pre-generate phantoms
         self._generate_phantoms()
@@ -201,31 +211,25 @@ class SimulatedCTDataset(Dataset):
         # Convert to tensor
         image_tensor = torch.from_numpy(image).unsqueeze(0).float()  # (1, H, W)
 
-        # Create forward model
-        device = 'cpu'  # Use CPU for data loading
-        radon = RadonTransform(
-            self.img_size, self.num_angles, self.num_detectors, device=device
-        )
-
+        # FIXED: Use pre-created operators for efficiency
         # Forward projection
-        sinogram = radon.forward_fast(image_tensor.unsqueeze(0)).squeeze(0)  # (1, A, D)
+        sinogram = self._radon.forward(image_tensor.unsqueeze(0)).squeeze(0)  # (1, A, D)
 
-        # Add noise
+        # Add noise - FIXED: Use only Poisson noise (physically correct for CT)
+        eps = 1e-6  # Small epsilon for numerical stability
         if self.noise_level != 'none':
-            # Poisson noise simulation
+            # Poisson noise simulation (the ONLY noise source in CT)
             counts = self.I0 * torch.exp(-sinogram)
-            counts_noisy = torch.poisson(counts.clamp(min=1))
-            sinogram_noisy = -torch.log(counts_noisy.clamp(min=1) / self.I0)
-            weights = counts_noisy.clamp(min=1)
-
-            # Additional Gaussian noise
-            noise_std = self.noise_std[self.noise_level]
-            sinogram_noisy = sinogram_noisy + noise_std * torch.randn_like(sinogram_noisy)
+            counts_noisy = torch.poisson(counts.clamp(min=eps))
+            sinogram_noisy = -torch.log(counts_noisy.clamp(min=eps) / self.I0)
+            weights = counts_noisy.clamp(min=eps)
+            # REMOVED: Additional Gaussian noise - not physical for CT
         else:
             sinogram_noisy = sinogram.clone()
-            weights = torch.ones_like(sinogram)
+            weights = torch.ones_like(sinogram) * self.I0
 
         # Create acquisition mask
+        device = 'cpu'
         if self.acquisition_type == 'sparse':
             mask = create_sparse_view_mask(self.num_angles, self.num_views, device)
             sinogram_noisy = sinogram_noisy * mask.squeeze(0)
@@ -240,11 +244,8 @@ class SimulatedCTDataset(Dataset):
         else:
             mask = torch.ones(1, 1, self.num_angles, 1)
 
-        # FBP reconstruction
-        fbp = FilteredBackProjection(
-            self.img_size, self.num_angles, self.num_detectors, device=device
-        )
-        fbp_recon = fbp(sinogram_noisy.unsqueeze(0)).squeeze(0)
+        # FBP reconstruction - FIXED: Use pre-created operator
+        fbp_recon = self._fbp(sinogram_noisy.unsqueeze(0)).squeeze(0)
 
         sample = {
             'image': image_tensor,

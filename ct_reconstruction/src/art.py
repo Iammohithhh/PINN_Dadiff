@@ -21,11 +21,10 @@ from .ct_physics import (
 
 class DynamicConv(nn.Module):
     """
-    Dynamic Convolution layer.
+    Dynamic Convolution layer using mixture of experts.
 
-    Generates input-dependent convolution kernels for adaptive filtering.
-    K_dynamic = sigma(W_k @ Z_PACE + b_k)
-    Z_filtered = Conv(Z_ADRN, K_dynamic)
+    FIXED: Correct implementation without problematic einsum.
+    Uses attention-weighted combination of expert kernels.
     """
 
     def __init__(
@@ -41,11 +40,11 @@ class DynamicConv(nn.Module):
         self.kernel_size = kernel_size
         self.num_experts = num_experts
 
-        # Expert convolution kernels
-        self.weight = nn.Parameter(
-            torch.randn(num_experts, out_channels, in_channels, kernel_size, kernel_size) * 0.01
-        )
-        self.bias = nn.Parameter(torch.zeros(num_experts, out_channels))
+        # Expert convolution layers (use ModuleList for proper weight handling)
+        self.experts = nn.ModuleList([
+            nn.Conv2d(in_channels, out_channels, kernel_size, padding=kernel_size // 2)
+            for _ in range(num_experts)
+        ])
 
         # Attention over experts
         self.attention = nn.Sequential(
@@ -71,19 +70,19 @@ class DynamicConv(nn.Module):
         # Compute attention weights over experts
         attn = self.attention(context)  # (B, num_experts)
 
-        # Combine expert weights
-        # weight: (num_experts, out_ch, in_ch, k, k)
-        # attn: (B, num_experts)
-        weight = torch.einsum('be,eoikk->boikk', attn, self.weight.flatten(-2, -1).unsqueeze(0).expand(B, -1, -1, -1, -1).squeeze(0))
-        weight = weight.view(B * self.out_channels, self.in_channels, self.kernel_size, self.kernel_size)
+        # Apply each expert and combine with attention weights
+        expert_outputs = []
+        for expert in self.experts:
+            expert_outputs.append(expert(x))
 
-        bias = torch.einsum('be,eo->bo', attn, self.bias).view(-1)
+        # Stack: (num_experts, B, out_ch, H, W)
+        stacked = torch.stack(expert_outputs, dim=0)
 
-        # Apply grouped convolution
-        x = x.view(1, B * self.in_channels, x.shape[2], x.shape[3])
-        padding = self.kernel_size // 2
-        out = F.conv2d(x, weight, bias, padding=padding, groups=B)
-        out = out.view(B, self.out_channels, out.shape[2], out.shape[3])
+        # Weight by attention: (B, num_experts) -> (num_experts, B, 1, 1, 1)
+        attn_weights = attn.permute(1, 0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+
+        # Weighted sum
+        out = (stacked * attn_weights).sum(dim=0)
 
         return out
 
