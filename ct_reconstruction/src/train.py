@@ -11,7 +11,7 @@ Implements the complete training pipeline with:
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 import numpy as np
 from pathlib import Path
 from typing import Dict, Optional, Any
@@ -129,8 +129,8 @@ class Trainer:
         )
 
         # Mixed precision
-        self.use_amp = config.get('use_amp', True)
-        self.scaler = GradScaler() if self.use_amp else None
+        self.use_amp = config.get('use_amp', True) and self.device.startswith('cuda')
+        self.scaler = GradScaler('cuda') if self.use_amp else None
 
         # Checkpointing
         self.checkpoint_dir = Path(config.get('checkpoint_dir', 'experiments/checkpoints'))
@@ -166,7 +166,7 @@ class Trainer:
                 # SAM: First forward-backward
                 self.optimizer.zero_grad()
 
-                with autocast(enabled=self.use_amp):
+                with autocast('cuda', enabled=self.use_amp):
                     outputs = self.model(sinogram, weights, mask)
                     losses = self.loss_fn(
                         outputs['reconstruction'], target,
@@ -183,7 +183,7 @@ class Trainer:
                 self.optimizer.first_step(zero_grad=True)
 
                 # SAM: Second forward-backward
-                with autocast(enabled=self.use_amp):
+                with autocast('cuda', enabled=self.use_amp):
                     outputs = self.model(sinogram, weights, mask)
                     losses = self.loss_fn(
                         outputs['reconstruction'], target,
@@ -205,7 +205,7 @@ class Trainer:
                 # Standard optimizer
                 self.optimizer.zero_grad()
 
-                with autocast(enabled=self.use_amp):
+                with autocast('cuda', enabled=self.use_amp):
                     outputs = self.model(sinogram, weights, mask)
                     losses = self.loss_fn(
                         outputs['reconstruction'], target,
@@ -260,7 +260,7 @@ class Trainer:
             weights = batch['weights'].to(self.device)
             mask = batch['mask'].to(self.device)
 
-            with autocast(enabled=self.use_amp):
+            with autocast('cuda', enabled=self.use_amp):
                 outputs = self.model(sinogram, weights, mask)
                 losses = self.loss_fn(
                     outputs['reconstruction'], target,

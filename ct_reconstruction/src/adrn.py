@@ -216,8 +216,13 @@ class UNetDecoder(nn.Module):
         reversed_mults = list(reversed(channel_mults))
         ch = base_channels * reversed_mults[0]
 
-        for i, mult in enumerate(reversed_mults[1:]):
-            out_ch = base_channels * mult
+        # FIXED: Process ALL levels (was missing first upsample)
+        for i, mult in enumerate(reversed_mults[:-1]):  # Changed from [1:] to [:-1]
+            # For first iteration, we stay at same channels before skip concat
+            # For subsequent, we go to the next level's channels
+            next_mult = reversed_mults[i + 1]
+            out_ch = base_channels * next_mult
+
             self.upsamples.append(
                 nn.ConvTranspose2d(ch, ch, 4, stride=2, padding=1)
             )
@@ -225,7 +230,7 @@ class UNetDecoder(nn.Module):
                 nn.ModuleList([
                     ResidualBlock(ch * 2, out_ch, time_emb_dim),  # *2 for skip
                     ResidualBlock(out_ch, out_ch, time_emb_dim),
-                    SelfAttention(out_ch) if mult >= 4 else nn.Identity()
+                    SelfAttention(out_ch) if next_mult >= 4 else nn.Identity()
                 ])
             )
             ch = out_ch
@@ -245,7 +250,7 @@ class UNetDecoder(nn.Module):
             x = upsample(x)
             # Handle size mismatch
             if x.shape[2:] != skips[i].shape[2:]:
-                x = F.interpolate(x, size=skips[i].shape[2:], mode='bilinear')
+                x = F.interpolate(x, size=skips[i].shape[2:], mode='bilinear', align_corners=False)
             x = torch.cat([x, skips[i]], dim=1)
             x = res1(x, t_emb)
             x = res2(x, t_emb)
