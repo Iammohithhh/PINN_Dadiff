@@ -187,20 +187,20 @@ class FilteredBackProjection(nn.Module):
         freq = torch.fft.fftfreq(n, device=self.device)
 
         if self.filter_type == 'ramp':
-            # Ram-Lak (ramp) filter
+            # Ram-Lak (ramp) filter: |omega|
             filt = torch.abs(freq) * 2
         elif self.filter_type == 'shepp-logan':
-            # Shepp-Logan filter
-            filt = torch.abs(freq) * torch.sinc(freq)
+            # Shepp-Logan filter: |omega| * sinc(omega/2)
+            filt = torch.abs(freq) * torch.sinc(freq / 2)
         elif self.filter_type == 'cosine':
-            # Cosine filter
+            # Cosine filter: |omega| * cos(pi*omega/2)
             filt = torch.abs(freq) * torch.cos(np.pi * freq / 2)
         elif self.filter_type == 'hamming':
-            # Hamming filter
-            filt = torch.abs(freq) * (0.54 + 0.46 * torch.cos(np.pi * freq))
+            # Hamming filter: |omega| * (0.54 - 0.46*cos(2*pi*omega))
+            filt = torch.abs(freq) * (0.54 - 0.46 * torch.cos(2 * np.pi * freq))
         elif self.filter_type == 'hann':
-            # Hann filter
-            filt = torch.abs(freq) * (0.5 + 0.5 * torch.cos(np.pi * freq))
+            # Hann filter: |omega| * (0.5 - 0.5*cos(2*pi*omega))
+            filt = torch.abs(freq) * (0.5 - 0.5 * torch.cos(2 * np.pi * freq))
         else:
             filt = torch.abs(freq) * 2  # Default to ramp
 
