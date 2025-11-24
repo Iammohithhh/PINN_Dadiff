@@ -213,24 +213,31 @@ class UNetDecoder(nn.Module):
         self.ups = nn.ModuleList()
         self.upsamples = nn.ModuleList()
 
-        reversed_mults = list(reversed(channel_mults))
-        ch = base_channels * reversed_mults[0]
+        # Decoder needs to have same number of levels as encoder
+        # Encoder: [1, 2, 4, 8] -> 4 downsamples, 4 skips at sizes [256, 128, 64, 32]
+        # Decoder: needs 4 upsamples to go from 16 -> 32 -> 64 -> 128 -> 256
 
-        # FIXED: Process ALL levels (was missing first upsample)
-        for i, mult in enumerate(reversed_mults[:-1]):  # Changed from [1:] to [:-1]
-            # For first iteration, we stay at same channels before skip concat
-            # For subsequent, we go to the next level's channels
-            next_mult = reversed_mults[i + 1]
-            out_ch = base_channels * next_mult
+        reversed_mults = list(reversed(channel_mults))  # [8, 4, 2, 1]
+
+        # Start with bottleneck channels
+        ch = base_channels * reversed_mults[0]  # 512
+
+        # Create upsampling layers for ALL levels
+        for i in range(len(channel_mults)):  # 4 levels
+            # Output channels for this level
+            if i < len(channel_mults) - 1:
+                out_ch = base_channels * reversed_mults[i + 1]
+            else:
+                out_ch = base_channels * reversed_mults[-1]  # Last level stays at base
 
             self.upsamples.append(
                 nn.ConvTranspose2d(ch, ch, 4, stride=2, padding=1)
             )
             self.ups.append(
                 nn.ModuleList([
-                    ResidualBlock(ch * 2, out_ch, time_emb_dim),  # *2 for skip
+                    ResidualBlock(ch * 2, out_ch, time_emb_dim),  # *2 for skip concat
                     ResidualBlock(out_ch, out_ch, time_emb_dim),
-                    SelfAttention(out_ch) if next_mult >= 4 else nn.Identity()
+                    SelfAttention(out_ch) if out_ch >= base_channels * 4 else nn.Identity()
                 ])
             )
             ch = out_ch
@@ -244,7 +251,7 @@ class UNetDecoder(nn.Module):
         skips: List[torch.Tensor]
     ) -> torch.Tensor:
         """Decode with skip connections."""
-        skips = list(reversed(skips))
+        skips = list(reversed(skips))  # Now [32x32, 64x64, 128x128, 256x256]
 
         for i, ((res1, res2, attn), upsample) in enumerate(zip(self.ups, self.upsamples)):
             x = upsample(x)
@@ -570,11 +577,24 @@ class CT_ADRN(nn.Module):
         # Add physics projection step
         # FIXED: Adaptive blending - physics strength increases with lower t (later steps)
         if sinogram is not None:
-            # Convert features to image domain
+            # Convert features to image domain (keeps spatial size)
             mean_image = self.to_image(mean)
+            feature_size = mean_image.shape[2:]  # Store original feature spatial size
 
-            # Physics step
-            mean_image_corrected = self.physics_proj(mean_image, sinogram, weights, mask)
+            # FIXED: Upsample to full image size for physics projection
+            mean_image_full = F.interpolate(
+                mean_image, size=(self.img_size, self.img_size),
+                mode='bilinear', align_corners=False
+            )
+
+            # Physics step at full resolution
+            mean_image_corrected = self.physics_proj(mean_image_full, sinogram, weights, mask)
+
+            # Downsample back to feature size
+            mean_image_corrected = F.interpolate(
+                mean_image_corrected, size=feature_size,
+                mode='bilinear', align_corners=False
+            )
 
             # Convert back to feature domain
             mean_corrected = self.from_image(mean_image_corrected)

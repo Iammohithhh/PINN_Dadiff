@@ -163,44 +163,31 @@ class Trainer:
             mask = batch['mask'].to(self.device)
 
             if self.use_sam:
-                # SAM: First forward-backward
+                # SAM with AMP requires careful handling
+                # Disable AMP for SAM to avoid scaler issues
                 self.optimizer.zero_grad()
 
-                with autocast('cuda', enabled=self.use_amp):
-                    outputs = self.model(sinogram, weights, mask)
-                    losses = self.loss_fn(
-                        outputs['reconstruction'], target,
-                        sinogram, weights
-                    )
-                    loss = losses['total']
-
-                if self.use_amp:
-                    self.scaler.scale(loss).backward()
-                    self.scaler.unscale_(self.optimizer.base_optimizer)
-                else:
-                    loss.backward()
+                # First forward-backward (without AMP to avoid scaler conflicts)
+                outputs = self.model(sinogram, weights, mask)
+                losses = self.loss_fn(
+                    outputs['reconstruction'], target,
+                    sinogram, weights
+                )
+                loss = losses['total']
+                loss.backward()
 
                 self.optimizer.first_step(zero_grad=True)
 
-                # SAM: Second forward-backward
-                with autocast('cuda', enabled=self.use_amp):
-                    outputs = self.model(sinogram, weights, mask)
-                    losses = self.loss_fn(
-                        outputs['reconstruction'], target,
-                        sinogram, weights
-                    )
-                    loss = losses['total']
-
-                if self.use_amp:
-                    self.scaler.scale(loss).backward()
-                    self.scaler.unscale_(self.optimizer.base_optimizer)
-                else:
-                    loss.backward()
+                # Second forward-backward
+                outputs = self.model(sinogram, weights, mask)
+                losses = self.loss_fn(
+                    outputs['reconstruction'], target,
+                    sinogram, weights
+                )
+                loss = losses['total']
+                loss.backward()
 
                 self.optimizer.second_step(zero_grad=True)
-
-                if self.use_amp:
-                    self.scaler.update()
             else:
                 # Standard optimizer
                 self.optimizer.zero_grad()
