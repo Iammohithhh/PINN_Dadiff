@@ -36,14 +36,18 @@ class ASPPConv(nn.Module):
 
 
 class ASPPPooling(nn.Module):
-    """Global Average Pooling branch for ASPP."""
+    """
+    Global Average Pooling branch for ASPP.
+
+    FIXED: Use GroupNorm instead of BatchNorm to support batch_size=1
+    """
 
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, 1, bias=False),
-            nn.BatchNorm2d(out_channels),
+            nn.GroupNorm(8, out_channels),  # FIXED: Was BatchNorm2d (fails with batch_size=1)
             nn.ReLU(inplace=True)
         )
 
@@ -90,9 +94,10 @@ class ASPP(nn.Module):
         self.convs = nn.ModuleList(modules)
 
         # Project concatenated features
+        # FIXED: Use GroupNorm instead of BatchNorm to support batch_size=1
         self.project = nn.Sequential(
             nn.Conv2d(out_channels * (len(atrous_rates) + 2), out_channels, 1, bias=False),
-            nn.BatchNorm2d(out_channels),
+            nn.GroupNorm(8, out_channels),  # FIXED: Was BatchNorm2d
             nn.ReLU(inplace=True),
             nn.Dropout(0.5)
         )
