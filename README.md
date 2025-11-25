@@ -1,30 +1,50 @@
-# PINN-DADif: Physics-Informed Deep Adaptive Diffusion Network  
-Implementation of the PINN-DADif research paper (Ahmed et al., 2025)  
----
+# CT-PINN-DADif: Physics-Informed CT Reconstruction
 
-## Introduction  
-This repository hosts the implementation of the PINN-DADif model: a **Physics-Informed Deep Adaptive Diffusion Network** designed for **robust and efficient MRI reconstruction**. The original paper:  
-> Ahmed S., Feng J., Mehmood A., Ali M. U., Yaqub M., Azfar Yaqub M. A., Manan M. A., Raheem A. (2025). *PINN-DADif: Physics-Informed Deep Adaptive Diffusion Network for Robust and Efficient MRI Reconstruction*. _Digital Signal Processing: A Review Journal_, 160, 105085. :contentReference[oaicite:1]{index=1}  
+Adaptation of PINN-DADif from MRI to CT reconstruction using Radon transform physics.
 
-The core innovation integrates physics-informed constraints (via a PINN framework) with a deep adaptive diffusion network to improve reconstruction quality and robustness in MRI imaging tasks.
+## Quick Start
+```bash
+# Install
+pip install torch numpy scipy matplotlib tqdm
 
----
+# Clone
+git clone https://github.com/Iammohithhh/PINN_Dadiff.git
+cd PINN_Dadiff/ct_reconstruction
 
-## Project Structure  
-```text
-/  
-├─ data/                    # raw and processed data  
-│   ├─ raw/                 # original MRI scans (e.g., k-space, image space)  
-│   └─ processed/           # pre-processed / paired data for training  
-├─ experiments/             # experiment logs, checkpoints  
-├─ models/                  # model definitions & saved weights  
-├─ src/                     # source code  
-│   ├─ data_loader.py       # dataset loading & preprocessing  
-│   ├─ model.py             # model architecture: PINN + diffusion network  
-│   ├─ loss_functions.py    # customized losses (physics residuals + data fidelity)  
-│   ├─ train.py             # training script  
-│   ├─ evaluate.py          # evaluation / inference script  
-│   └─ utils.py             # helper functions, logging, visualization  
-├─ notebooks/               # optional Jupyter notebooks for exploration  
-├─ README.md                # this file  
-└─ requirements.txt         # Python dependencies  
+# Train (5 epochs proof-of-concept)
+python run_training.py --mode demo
+
+# Or use notebook
+# Open: notebooks/CT_PINN_DADif_Training.ipynb in Colab
+```
+
+## Results (5 Epochs)
+
+| Method | PSNR | SSIM |
+|--------|------|------|
+| FBP | 26.14 dB | 71.82% |
+| CT-PINN-DADif | 26.73 dB | 73.91% |
+| Improvement | +0.59 dB | +2.09% |
+
+⚠️ **Note**: Proof-of-concept only. Full training (600-1000 epochs) needed for clinical use.
+
+## Key Features
+
+- ✅ Differentiable Radon transform (validated: 4.3% adjoint error)
+- ✅ Poisson noise modeling
+- ✅ Four-stage pipeline: LPCE → PACE → ADRN → ART
+- ✅ Stable training (no NaN losses)
+
+## Citation
+```bibtex
+@article{ahmed2025pinn,
+  title={PINN-DADif for MRI Reconstruction},
+  author={Ahmed et al.},
+  journal={Digital Signal Processing},
+  year={2025}
+}
+```
+
+## License
+
+MIT
