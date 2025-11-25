@@ -28,7 +28,7 @@ def compute_metrics(pred: torch.Tensor, target: torch.Tensor) -> Dict[str, float
     """
     Compute PSNR, SSIM, RMSE, and MAE metrics.
 
-    FIXED: Added RMSE and MAE - standard CT reconstruction metrics.
+    FIXED: Proper SSIM implementation with sliding window to prevent values > 1.0
 
     Args:
         pred: Predicted image (B, 1, H, W)
@@ -44,10 +44,10 @@ def compute_metrics(pred: torch.Tensor, target: torch.Tensor) -> Dict[str, float
     # MSE
     mse = ((pred - target) ** 2).mean().item()
 
-    # RMSE (Root Mean Square Error) - ADDED
+    # RMSE (Root Mean Square Error)
     rmse = np.sqrt(mse)
 
-    # MAE (Mean Absolute Error) - ADDED
+    # MAE (Mean Absolute Error)
     mae = (torch.abs(pred - target)).mean().item()
 
     # PSNR
@@ -56,23 +56,44 @@ def compute_metrics(pred: torch.Tensor, target: torch.Tensor) -> Dict[str, float
     else:
         psnr = 10 * np.log10(1.0 / mse)
 
-    # SSIM (simplified)
-    C1 = 0.01 ** 2
-    C2 = 0.03 ** 2
+    # SSIM with proper sliding window (11x11 Gaussian)
+    C1 = (0.01) ** 2
+    C2 = (0.03) ** 2
 
-    mu_pred = pred.mean(dim=(2, 3), keepdim=True)
-    mu_target = target.mean(dim=(2, 3), keepdim=True)
+    # Create Gaussian window (11x11)
+    window_size = 11
+    sigma = 1.5
+    gauss = torch.Tensor([np.exp(-(x - window_size//2)**2 / (2 * sigma**2))
+                          for x in range(window_size)])
+    gauss = gauss / gauss.sum()
+    window_1d = gauss.unsqueeze(1)
+    window_2d = window_1d.mm(window_1d.t()).float()
+    window = window_2d.expand(pred.size(1), 1, window_size, window_size).contiguous()
+    window = window.to(pred.device)
 
-    sigma_pred = ((pred - mu_pred) ** 2).mean(dim=(2, 3), keepdim=True)
-    sigma_target = ((target - mu_target) ** 2).mean(dim=(2, 3), keepdim=True)
-    sigma_both = ((pred - mu_pred) * (target - mu_target)).mean(dim=(2, 3), keepdim=True)
+    # Compute local statistics using convolution
+    mu_pred = torch.nn.functional.conv2d(pred, window, padding=window_size//2, groups=pred.size(1))
+    mu_target = torch.nn.functional.conv2d(target, window, padding=window_size//2, groups=target.size(1))
 
-    ssim = ((2 * mu_pred * mu_target + C1) * (2 * sigma_both + C2)) / \
-           ((mu_pred ** 2 + mu_target ** 2 + C1) * (sigma_pred + sigma_target + C2))
+    mu_pred_sq = mu_pred ** 2
+    mu_target_sq = mu_target ** 2
+    mu_pred_target = mu_pred * mu_target
+
+    sigma_pred_sq = torch.nn.functional.conv2d(pred * pred, window, padding=window_size//2, groups=pred.size(1)) - mu_pred_sq
+    sigma_target_sq = torch.nn.functional.conv2d(target * target, window, padding=window_size//2, groups=target.size(1)) - mu_target_sq
+    sigma_pred_target = torch.nn.functional.conv2d(pred * target, window, padding=window_size//2, groups=pred.size(1)) - mu_pred_target
+
+    # SSIM formula
+    ssim_map = ((2 * mu_pred_target + C1) * (2 * sigma_pred_target + C2)) / \
+               ((mu_pred_sq + mu_target_sq + C1) * (sigma_pred_sq + sigma_target_sq + C2))
+
+    # Clamp SSIM to valid range [0, 1] to handle numerical errors
+    ssim_val = ssim_map.mean().item()
+    ssim_val = max(0.0, min(1.0, ssim_val))  # Ensure in [0, 1]
 
     return {
         'psnr': psnr,
-        'ssim': ssim.mean().item() * 100,  # Convert to percentage
+        'ssim': ssim_val * 100,  # Convert to percentage (0-100)
         'rmse': rmse,
         'mae': mae
     }
